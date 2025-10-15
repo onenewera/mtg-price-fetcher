@@ -14,4 +14,9 @@ rapidfuzz==3.14.1
 beautifulsoup4==4.12.3
 
 gunicorn==21.2.0
+gspread==6.1.4
+google-auth==2.34.0
+requests-cache==1.2.1
+flask-limiter==3.8.0
+redis==5.0.8
 
