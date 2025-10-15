@@ -1,8 +1,17 @@
-from htmldom import htmldom
-from fuzzywuzzy import process
-from html import unescape
 import requests
+from bs4 import BeautifulSoup
+from rapidfuzz import process
+from html import unescape
 import urllib
+import logging
+
+logger = logging.getLogger(__name__)
+
+def _get_dom_from_url(url: str, timeout: int = 20) -> BeautifulSoup:
+    logger.info("Fetching URL: %s", url)
+    resp = requests.get(url, timeout=timeout)
+    resp.raise_for_status()
+    return BeautifulSoup(resp.text, "html.parser")
 
 MTGSTOCKS_BASE_URL = 'http://www.mtgstocks.com'
 QUERY_STRING = '/cards/search?utf8=%E2%9C%93&print%5Bcard%5D={}&button='
@@ -15,11 +24,10 @@ def generate_search_url(name):
 # searches all items on the given page matching the given selector
 # and returns the one closes
 def get_matching_item_on_page(url, text, selector):
-    page = htmldom.HtmlDom(url)
-    page.createDom()
-    elems = page.find(selector)
+    dom = _get_dom_from_url(url)
+    elems = dom.select(selector)
 
-    possible_matches = [elem.text() for elem in elems]
+    possible_matches = [elem.get_text(strip=True) for elem in elems]
     best_match = process.extractOne(text, possible_matches)
 
     match_index = possible_matches.index(best_match[0])
@@ -28,7 +36,7 @@ def get_matching_item_on_page(url, text, selector):
 def get_card_url_from_search_results(search_url, name):
     card_link = get_matching_item_on_page(search_url, name, '.table > tbody > tr > td > a')
 
-    return MTGSTOCKS_BASE_URL + card_link.attr('href')
+    return MTGSTOCKS_BASE_URL + (card_link.get('href') if card_link else '')
 
 def card_url_from_name(name):
     query_url = generate_search_url(name)
@@ -45,19 +53,21 @@ def card_url_from_set(name, card_set):
     set_link = get_matching_item_on_page(SETS_PATH, card_set, '.list > a')
 
     card_link = get_matching_item_on_page(
-        MTGSTOCKS_BASE_URL + set_link.attr('href'),
+        MTGSTOCKS_BASE_URL + (set_link.get('href') if set_link else ''),
         name,
         '.table tr > td > a'
     )
 
-    return MTGSTOCKS_BASE_URL + card_link.attr('href')
+    return MTGSTOCKS_BASE_URL + (card_link.get('href') if card_link else '')
 
 def scrape_price(card_url):
-    card_page = htmldom.HtmlDom(card_url)
-    card_page.createDom()
-    card_name = card_page.find('h2 > a').text()
-    card_set = card_page.find('h5 > a').text()
-    price_values = [elem.text() for elem in card_page.find('.priceheader')]
+    dom = _get_dom_from_url(card_url)
+    name_el = dom.select_one('h2 > a')
+    set_el = dom.select_one('h5 > a')
+    price_els = dom.select('.priceheader')
+    card_name = name_el.get_text(strip=True) if name_el else None
+    card_set = set_el.get_text(strip=True) if set_el else None
+    price_values = [elem.get_text(strip=True) for elem in price_els]
     price_keys = ['avg']
 
     if len(price_values) > 1:
@@ -65,8 +75,8 @@ def scrape_price(card_url):
         price_keys.append('high')
 
     return {
-        'name': unescape(card_name),
-        'set': unescape(card_set),
+        'name': unescape(card_name) if card_name else None,
+        'set': unescape(card_set) if card_set else None,
         'link': card_url,
         'promo': len(price_keys) == 1,
         'prices' : dict(zip(price_keys, price_values))
